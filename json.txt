@@ -1,0 +1,889 @@
+# -*- coding: robot -*-
+########################################################
+#Author: 	Roby
+#Email: 	wluo@redhat.com
+#
+#Flie:		json.txt
+#Create Date:	2014-06-11 15:52:27
+#
+########################################################
+*** Variables ***
+${Eligible_bug}			       960113
+${Ineligible_bug}		       960071
+${Bug_invalid}			       000000000
+${Secure_bug}			       1098957
+${Public_issue}			       XNIO-200
+${Secure_issue}			       JBPAPP-10848
+${Team_issue}			       JBPAPP-8797 
+${NewFile_advisory}		       17902
+${Advisory_bug}			       1028825
+${Un_existed_advisory}		       0000000
+${RHSA_NewFile}			       17902
+${RHSA_bug}			       1028825
+${RHEA_NewFile}			       17860
+${RHEA_bug}			       1089961
+${RHBA_NewFile}			       17923
+${RHBA_bug}			       791316
+${Advisory_build_NEW}		       17962
+${Advisory_build_QE}                   17864
+
+*** Settings ***
+Resource    wrapper.txt 
+Library     ../../scripts/ServerLogin.py
+
+Suite Setup       Errata Suite Setup
+Suite Teardown    Errata Suite Teardown
+Test Setup        Errata Test Setup
+Test Teardown     Errata Test Teardown 
+
+*** Key Words ***
+Should Contain A List
+    [Arguments]    ${data}    @{list}
+    :For     ${word}     IN     @{list}
+    \    Should Contain    ${data}    ${word}
+Drop A New Advisory
+    [Arguments]    ${res}
+    ${data} =          Rest Json    ${res}
+    ${dict} =          Rest Message To Dict     ${data}
+    ${errata_id} =     Convert To String    ${dict['content']['content']['errata_id']}
+    ${errata_type}=    Convert To String    ${dict['params']['advisory']['errata_type']}
+    Rest Advisory Drop     ${errata_id}
+    Page Should Contain    Deleted
+    [Return]    ${errata_type}
+Fetch The First Docs Advisory
+    [Arguments]    ${status}
+    Create Filter
+    Select Filter Condition    Doc Status    ${status}
+    Select Filter State    NEW_FILES    QE    REL_PREP
+    ${filter_name}=    Generate Random String    3
+    Save Filter    ${filter_name}
+    ${filter_id}=       Get Filter ID By Name    ${filter_name}
+    ${filter_id}=       Convert To String    ${filter_id}
+    ${tmp} =     Old Advisory Filter    ${filter_id}
+    Modify Filter    ${filter_id}
+    Delete Filter
+    Wait Until Page Contains     'Filter ${filter_name}' deleted. 
+    ${data}=     Rest Json    ${tmp}
+    ${list}=     Rest Message To Dict    ${data}
+    ${id}=    Set Variable     ${list[0]['id']}
+    [Return]    ${id}   
+Fetch The First State Advisory
+    [Arguments]    ${state}
+    Create Filter
+    Select All Filter States
+    Unselect Filter State    QE    REL_PREP    PUSH_READY    IN_PUSH    DROPPED    SHIPPED
+    Select Filter State    ${state}
+    Unselect Filter State    NEW_FILES
+    ${filter_name}=    Generate Random String    3
+    Save Filter    ${filter_name}
+    ${filter_id}=       Get Filter ID By Name    ${filter_name}
+    ${filter_id}=       Convert To String    ${filter_id}
+    ${tmp} =     Old Advisory Filter    ${filter_id}
+    Modify Filter    ${filter_id}
+    Delete Filter
+    Wait Until Page Contains     'Filter ${filter_name}' deleted.
+    ${data}=     Rest Json    ${tmp}
+    ${list}=     Rest Message To Dict    ${data}
+    ${id}=    Convert To String     ${list[0]['id']}
+    [Return]    ${id}
+
+
+
+
+*** Test Cases ***
+
+Test preparation for advisory state
+    [Documentation]     Assign right state to the advisories
+    [Tags]              ID_prep
+    @{NewFiles_list}=      Create List    ${NewFile_advisory}    ${Advisory_build_NEW}    ${RHBA_NewFile}    ${RHEA_NewFile}    ${RHSA_NewFile}
+    :FOR    ${item}    IN    @{NewFiles_list}
+    \    ${res}=    Rest Erratum Change State    ${item}    NEW_FILES
+    \    status code of "${res}" should match not be "404"
+    Rest Erratum Change State   ${Advisory_build_QE}    QE
+
+
+
+Case 285632 Check return all advisories for filters 
+    [Documentation]    Check the functions of filters
+    [Tags]	       ID_285632
+    @{list} =          Create List    advisory_name    content    flags    product    release    type
+    ${res} =           Old Advisory Filter    5
+    ${data} =          Rest Json    ${res}
+    Should Contain A List     ${data}    @{list}
+    ${res} =           Old Advisory Filter    226
+    ${data} =          Rest Json     ${res}
+    Should Contain A List     ${data}    @{list}
+    ${res} =           Old Advisory Filter    2
+    ${data} =          Rest Json     ${res}
+    Should Be Equal    ${data}    []
+    ${res} =           Old Advisory Filter    1234567
+    ${data} =          Rest Json    ${res}
+    Should Be Equal    ${data}      No JSON object could be decoded
+
+Case 258633 Check return bugs for an advisory
+    [Documentation]    Check bugs
+    [Tags]             ID_258633
+    #Check bugs for an existed advisory
+    ${res} =           Old Advisory Bug List     17808
+    ${data} =          Rest Json    ${res}
+    Should Contain     ${data}       bug_status
+    #Check bugs for an advisory without any bugs added
+    ${res} =           Old Advisory Bug List     17862
+    ${data} =          Rest Json    ${res}
+    Should Be Equal    ${data}       []
+    #Check bugs for a non-existed advisory
+    ${res} =           Old Advisory Bug List     123456789
+    ${data} =          Rest Json    ${res}
+    Should Contain     ${data}      u'error': u'Unable to find errata with id: 123456789: Bad errata id given: 123456789' 
+
+Case 285634 Check return brew builds for an advisory
+    [Documentation]    Check brew builds
+    [Tags]             ID_285634
+    #Check brew builds for an advisory
+    ${res} =           Old Advisory Build List    14827
+    ${data} =          Rest Json    ${res}
+    Should Contain     ${data}      .rpm
+
+    #Check brew builds for an advisory without any brew builds added
+    ${res} =           Old Advisory Build List    14859
+    ${data} =          Rest Json    ${res}
+    Should Be Equal    ${data}      {}
+
+    #Check brew builds  for a non-existed advisory
+    ${res} =           Old Advisory Build List    123456789
+    ${data} =          Rest Json    ${res}
+    Should Contain     ${data}      u'error': u'Unable to find errata with id: 123456789: Bad errata id given: 123456789' 
+
+Case 285635 Check return TPS jobs for advisories
+    [Documentation]    Check TPS jobs
+    [Tags]             ID_285635
+    #Check returned TPS jobs for an advisory with some PASS/FAILED TPS jobs:
+    @{list} =          Create List    arch     finished    host    job_id
+    ...    link    link_text    rhnqa    run_id    started    state    version
+    ${res} =           Old Advisory TPS List      14730
+    ${data} =          Rest Json    ${res}
+    Should Contain A List    ${data}    @{list}
+
+    #Check returned TPS jobs for an advisory without TPS jobs
+    ${res} =           Old Advisory TPS List      14859
+    ${data} =          Rest Json    ${res}
+    Should Be Equal    ${data}       []
+
+    #Check for an non-existed advisory
+    ${res} =           Old Advisory TPS List      123456789
+    ${data} =          Rest Json    ${res}
+    Should Contain     ${data}      u'error': u'Unable to find errata with id: 123456789: Bad errata id given: 123456789' 
+
+Case 285636 Check return all products and a specific product as admin
+    [Documentation]     Check products
+    [Tags]    ID_285636
+    @{list} =     Create List    product    build_path    cdw_flag_prefix    default_solution    description    ftp_path    ftp_subdir 
+    ...    id    is_internal    isactive    name    path    short_name    state_machine_rule_set_id    valid_bug_states
+    #get admin role
+    "admin" Role Has Been Added To User
+    #Check all products
+    ${res} =           Old Product List
+    ${data} =          Rest Json    ${res}
+    Should Contain A List    ${data}    @{list}
+
+    #Check for a specific product
+    ${res} =          Old Specific Product List     RHEL
+    ${data} =          Rest Json    ${res}    
+    Should Contain A List    ${data}    @{list}
+    ${res} =          Old Specific Product List     RHOSE
+    ${data} =          Rest Json    ${res}    
+    Should Contain A List    ${data}    @{list}
+
+    #Check for non-existed product
+    ${res} =           Old Specific Product List    123
+    ${data} =          Rest Json     ${res}
+    Should Contain     ${data}       u'error': u"Couldn't find Product with id=123"
+Case 287301 Check return data for individual advisories
+    [Documentation]    Check individual advisories
+    [Tags]    ID_287301
+    @{list} =     Create List    advisory_name    content    keywords    solution    topic    
+    ...    flags    id    people    product    pushcount    release    respin_count    revision
+    ...    security_impact    status    synopsis    text_only    timestamps    type
+    #Check an advisory returned data
+    ${res} =           Old Advisory Show    14864
+    ${data} =          Rest Json            ${res}
+    Should Contain A List    ${data}    @{list}
+
+    #Check another advisory with different type(RHEA)
+    ${res} =           Old Advisory Show    14892
+    ${data} =          Rest Json            ${res}
+    Should Contain A List    ${data}    @{list}
+
+    #Check for an non-existed advisory
+    ${res} =           Old Advisory Show    000000
+    ${data} =          Rest Json            ${res}
+    Should Contain     ${data}      u'error': u'Unable to find errata with id: 000000: Bad errata id given: 000000' 
+
+Case 287303 Check return rpmdiff for advisories
+    [Documentation]     Check return rpmdiff  
+    [Tags]    ID_287303   
+    #Check an advisory with rpmdiff PASS
+    ${res} =            Old_Advisory_RPMDiff_List    14871 
+    ${data} =           Rest Json     ${res}
+    @{list} =     Create List    rpmdiff_run    brew_build_id    brew_rpm_id    errata_brew_mapping_id
+    ...    errata_file_id    errata_id    errata_nr    last_good_run_id    new_version    obsolete
+    ...    old_version     overall_score    package_id    package_name    package_path    person    run_date    run_id    variant
+    Should Contain A List    ${data}     @{list}
+
+    #Check another advisory without rpmdiff run
+    ${res} =            Old_Advisory_RPMDiff_List    17870
+    ${data} =           Rest Json     ${res}
+    Should Be Equal     ${data}       []
+
+    #Check for an non-existed advisory
+    ${res} =            Old_Advisory_RPMDiff_List    000000
+    ${data} =           Rest Json     ${res}
+    Should Contain      ${data}       u'error': u'Unable to find errata with id: 000000: Bad errata id given: 000000'
+
+Case 287304 Check product versions as an admin
+    [Documentation]    Check Product versions
+    [Tags]             ID_287304     
+    @{list} =     Create List    product_version    allow_rhn_debuginfo    base_product_version_id    default_brew_tag
+    ...    description    enabled    forbid_ftp    id    is_oval_product    is_rhel_addon    is_server_only    name
+    ...    product_id    rhel_release_id    sig_key    supports_cdn    unused_push_types    
+  #Get admin role
+    "admin" Role Has Been Added To User
+  #Check  product version for an existed product, like "RHEL"
+    ${res} =            Old Product Version List    RHEL
+    ${data} =           Rest Json     ${res}
+    Should Contain A List    ${data}     @{list}
+  #Check another product version, like "RHOSE"
+    ${res} =            Old Product Version List    RHOSE
+    ${data} =           Rest Json     ${res}
+    Should Contain A List    ${data}     @{list}
+  #Check for an non-existed product
+    ${res} =            Old Product Version List    OSE
+    ${data} =           Rest Json     ${res}
+    Should Contain      ${data}      u'error': u"Couldn't find Product with short_name = OSE"
+
+Case 288590 Should list all errata for build when retriving show_released_build
+    [Documentation]    List errata for builds
+    [Tags]     ID_288590   
+  #Visit release build info page to check its info
+    ${link} =            Replace String     ${Show_Released_Build_URL}    <build_id>    209290
+    Go To Lazily    ${link}
+    Wait Until Page Contains    Released packages for build    ${TIMEOUT}
+  #Try Json to check show_released_build for the builds with multiple advisoies added
+    ${res} =            Show Released Build List    209290
+    ${data} =           Rest Json     ${res}
+    Should Contain      ${data}       errata
+  #Check another released build such as build_id=272905
+    ${link} =            Replace String     ${Show_Released_Build_URL}    <build_id>    272905 
+    Go To Lazily    ${link}
+    Wait Until Page Contains    Released packages for build    ${TIMEOUT}
+
+    ${res} =            Show Released Build List    272905
+    ${data} =           Rest Json     ${res}
+    Should Contain      ${data}       errata
+
+Case 293149 Exception notifications should go to an email alias instead of a hard-coded list
+    [Documentation]    Check Exception notifications
+    [Tags]             ID_293149    
+    Go To Lazily       ${ErrataIndexPage} 
+    ${res} =            Run Command     tail -n 300 /var/www/errata_rails/log/staging.log 
+    Should Not Contain    ${res}    Sent mail to errata-owner@redhat.com
+    Go To               ${ErrataIndexPage}/throw_exception
+    ${res} =            Run Command     tail -n 300 /var/www/errata_rails/log/staging.log 
+    Should Contain      ${res}    Sent mail to errata-owner@redhat.com
+
+Case 317572 Create a RHSA advisory with secalert/non-secalert role   
+    [Documentation]    Create a RHSA advisory
+    [Tags]             ID_317572    
+  #Create a RHSA with a non-secalert user
+    "secalert" Role Has Been Removed From User
+    ${res} =      Rest Erratum Create    RHSA    Low
+    ...    RHEL    RHEL-7.0.0    solution    test
+    ...    shajiang@redhat.com    shajiang@redhat.com
+    ...    test    test    960071
+    status code of "${res}" should be "422"
+  #Get secalert role to create a RHSA advisory
+    "secalert" Role Has Been Added To User
+    ${res} =      Rest Erratum Create    RHSA    Low
+    ...    RHEL    RHEL-7.0.0    solution    test
+    ...    shajiang@redhat.com    shajiang@redhat.com
+    ...    test    test    960071
+    status code of "${res}" should be "201"
+
+Case 317574 Edit an advisory with valid/invalid values updated using dev/qa role
+    [Documentation]    Edit an advisory
+    [Tags]             ID_317574    
+    "qa" Role Has Been Added To User
+    #Update an advisory
+    ${res} =     Rest Erratum Update    17902    advisory[package_owner_email]=wluo@redhat.com
+    status code of "${res}" should match "2??"
+    #Update an adivosry with invalid value added
+    ${res} =     Rest Erratum Update    17902    advisory[package_owner_email]=aaaa@redhat.com
+    status code of "${res}" should not match "2??"
+    #Update an advisory with empty value
+    ${res} =     Rest Erratum Update    17902    advisory[package_owner_email]=
+    status code of "${res}" should not match "2??"
+
+Case 317575 Add bugs to an advisory 
+    [Documentation]    Adding bugs
+    [Tags]             ID_317575    
+    #kinit with dev/qa role
+    "qa" Role Has Been Added To User
+    "secalert" Role Has Been Removed From User
+    #Add eligibility bugs to an advisory
+    ${res} =    Rest Erratum Add Bug    ${NewFile_advisory}    ${Eligible_bug}
+    status code of "${res}" should match "2??"
+    Go To Lazily    ${AdvisoryUrl}/${NewFile_advisory}
+    Check Comments Update Contain    The following bugs have been added:
+    Check Comments Update Contain    ${Eligible_bug}
+    Rest Erratum Remove Bug    ${NewFile_advisory}    ${Eligible_bug}
+    #Add ineligibility bugs to an advisory
+    ${res} =    Rest Erratum Add Bug    ${NewFile_advisory}    ${Ineligible_bug}
+    status code of "${res}" should not match "2??"
+    #Add invalid bug numbers to an advisory
+    ${res} =    Rest Erratum Add Bug    ${NewFile_advisory}    ${Bug_invalid}
+    status code of "${res}" should not match "2??"
+    #Switch to secalert user and add ineligible bug 
+    "secalert" Role Has Been Added To User
+    ${res} =    Rest Erratum Add Bug    ${NewFile_advisory}    ${Ineligible_bug}
+    status code of "${res}" should match "2??"
+    Go To Lazily    ${AdvisoryUrl}/${NewFile_advisory}
+    Check Comments Update Contain    The following bugs have been added:
+    Check Comments Update Contain    ${Ineligible_bug}
+    Rest Erratum Remove Bug    ${NewFile_advisory}    ${Ineligible_bug}
+    "secalert" Role Has Been Removed From User
+
+Case 321078 Show an advisory
+    [Documentation]
+    [Tags]             ID_321078    
+    # Show an exist advisory
+    ${res} =     Rest Erratum Show    ${NewFile_advisory}
+    status code of "${res}" should match "2??"
+    #Show an un-exist advisory
+    ${res} =     Rest Erratum Show    ${Un_existed_advisory}
+    status code of "${res}" should not match "2??"
+
+Case 321233 Remove bugs from an advisory    
+    [Documentation]
+    [Tags]             ID_321233   
+  #Remove a bug from a RHSA advisory as secalert user
+    "secalert" Role Has Been Added To User
+    ${res} =     Rest Erratum Remove Bug    ${RHSA_NewFile}      ${RHSA_bug}
+    status code of "${res}" should match "2??"
+    Go To Lazily    ${AdvisoryUrl}/${RHSA_NewFile}
+    Check Comments Update Contain    The following bugs have been removed:
+    Check Comments Update Contain    ${RHSA_bug}
+    Rest Erratum Add Bug    ${RHSA_NewFile}      ${RHSA_bug}
+  #Remove a bug from a RHSA advisory as non-secalert user
+    "secalert" Role Has Been Removed From User
+    Rest Erratum Add Bug    ${RHSA_NewFile}    ${Secure_bug}
+    ${res} =     Rest Erratum Remove Bug    ${RHSA_NewFile}      ${Secure_bug}
+    status code of "${res}" should not match "2??"
+    "secalert" Role Has Been Added To User
+    Rest Erratum Remove Bug    ${RHSA_NewFile}      ${Secure_bug}
+    "secalert" Role Has Been Removed From User
+  #Remove a bug from a RHBA advisory as non-secalert user
+    ${res} =     Rest Erratum Remove Bug    ${RHBA_NewFile}      ${RHBA_bug}
+    status code of "${res}" should match "2??"
+    Go To Lazily    ${AdvisoryUrl}/${RHSA_NewFile}
+    Check Comments Update Contain    The following bugs have been removed:
+    Check Comments Update Contain    ${RHSA_bug}
+    Rest Erratum Add Bug    ${RHBA_NewFile}      ${RHBA_bug}
+  #Remove a non-existed bug from an advisory
+    ${res} =     Rest Erratum Remove Bug    ${RHBA_NewFile}      ${Bug_invalid}
+    status code of "${res}" should not match "2??"
+
+Case 321250 Create an text-only RHSA advisory with dirrerent role
+    [Documentation]
+    [Tags]             ID_321250    
+  # kinit a secalert role Create a text only RHSA advisory with all required fields filled
+    "secalert" Role Has Been Added To User
+    ${res} =           Rest Erratum Create    errata_type=RHSA    product=RHEL    release=RHEL-7.0.0
+    ...    security_impact=Low    solution=2    description=test
+    ...    manager_email=shajiang@redhat.com    package_owner_email=shajiang@redhat.com
+    ...    synopsis=test    topic=test    idsfixed=960071
+    ...    text_only=1    text_only_cpe=CPEtest    cve=CVE-1000-1000
+    ...    reboot_suggested=test    keywords=test    reference=References
+    ...    publish_date_override=2013-11-21    embargo_date=2013-11-11    text_ready=1
+    ${status}=     Get Status Code From Response    ${res}
+    ${errata_type} =    Run Keyword If    '${status}' == '201'    Drop A New Advisory    ${res}
+    Run Keyword If    '${status}' == '201'    Should Be Equal    ${errata_type}    RHSA
+  # kinit with a non-secalert role and repeat
+    "secalert" Role Has Been Removed From User
+    ${res} =           Rest Erratum Create    errata_type=RHSA     product=RHEL    release=RHEL-7.0.0
+    ...    security_impact=Low    solution=2    description=test
+    ...    manager_email=shajiang@redhat.com    package_owner_email=shajiang@redhat.com
+    ...    synopsis=test    topic=test    idsfixed=960071
+    ...    text_only=1    text_only_cpe=CPEtest    cve=CVE-1000-1000
+    ...    reboot_suggested=test    keywords=test    reference=References
+    ...    publish_date_override=2013-11-21    embargo_date=2013-11-11    text_ready=1
+    ${status}=     Get Status Code From Response    ${res}
+    ${errata_type} =    Run Keyword If    '${status}' == '201'    Drop A New Advisory    ${res}
+    Run Keyword If    '${status}' == '201'    Should Not Be Equal    ${errata_type}    RHSA
+ 
+
+Case 321255 Edit an advisory with embargo date/release date updated 
+    [Documentation]
+    [Tags]             ID_321255    
+  #Edit an advisory to set the embargo date
+    ${res} =    Rest Erratum Update    ${NewFile_advisory}    advisory[embargo_date]=2013-11-16
+    status code of "${res}" should match "2??"
+  #Update with  invalid embargo date
+    ${res} =    Rest Erratum Update    ${NewFile_advisory}    advisory[embargo_date]=11-11-11
+    status code of "${res}" should not match "2??"
+  #Repeat the steps for publish_date_override, should not use the SHIPPED LIVE advisory
+    ${res} =    Rest Erratum Update    ${NewFile_advisory}    advisory[publish_date_override]=2014-11-16
+    status code of "${res}" should match "2??"
+
+Case 321266 Edit an advisory with advisory type updated
+    [Documentation]
+    [Tags]             ID_321266    
+  #Edit an advisory to update its type (original RHBA)
+    ${res} =    Rest Erratum Update    ${RHBA_NewFile}    advisory[errata_type]=RHEA
+    Rest Erratum Update    ${RHBA_NewFile}    advisory[errata_type]=RHEA
+    status code of "${res}" should match "2??"
+  #Edit an advisory with type unchanged
+    ${res} =    Rest Erratum Update    ${RHEA_NewFile}    advisory[errata_type]=RHEA
+    status code of "${res}" should match "2??"
+  #Try to change a RHBA/RHEA to RHSA with a secalert role and restore
+    "secalert" Role Has Been Added To User
+    ${res} =    Rest Erratum Update    ${RHBA_NewFile}    advisory[security_impact]=Low    advisory[errata_type]=RHSA
+    Rest Erratum Update    ${RHBA_NewFile}    advisory[errata_type]=RHBA
+    status code of "${res}" should match "2??"
+  #Try to change a RHBA/RHEA to RHSA with a non-secalert role
+    "secalert" Role Has Been Removed From User
+    ${res} =    Rest Erratum Update    ${RHBA_NewFile}    advisory[security_impact]=Low    advisory[errata_type]=RHSA
+    status code of "${res}" should not match "2??"
+  #Try to change a RHSA to RHBA/RHEA with a non-secalert role and non-admin
+    "admin" Role Has Been Removed From User
+    ${res} =    Rest Erratum Update    ${RHSA_NewFile}    advisory[security_impact]=Low    advisory[errata_type]=RHBA
+    status code of "${res}" should not match "2??"
+    "admin" Role Has Been Added To User
+
+
+Case 321269 Edit an advisory to set/unset the advisory as text-only
+    [Documentation]
+    [Tags]             ID_321269    
+  #Edit an advisory to set it as text only
+    ${res} =    Rest Erratum Update    ${NewFile_advisory}    advisory[text_only]=1
+    status code of "${res}" should match "2??"
+  #Edit an advisory to unset text only
+    ${res} =    Rest Erratum Update    ${NewFile_advisory}    advisory[text_only]=0
+    status code of "${res}" should match "2??"
+
+Case 321277 Edit an advisory to set text ready for an advisory
+    [Documentation]
+    [Tags]             ID_321277    
+    "docs" Role Has Been Added To User
+  #Edit an advisory which docs approval not currently requested
+    ${Unrequested_advisory}=    Fetch The First Docs Advisory     Not Requested
+    ${res} =    Rest Erratum Update    ${Unrequested_advisory}    advisory[text_ready]=1
+    Go To Lazily           errata.app.qa.eng.nay.redhat.com/docs/show/${Unrequested_advisory}
+    Page Should Contain    Advisory Documentation Approval - Requested, not yet approved
+  #Edit an advisory which docs approval not currently requested
+    ${Unrequested_advisory}=    Fetch The First Docs Advisory     Not Requested
+    ${res} =    Rest Erratum Update    ${Unrequested_advisory}    advisory[text_ready]=0
+    Go To Lazily           errata.app.qa.eng.nay.redhat.com/docs/show/${Unrequested_advisory}
+    Page Should Contain    Advisory Documentation Approval - Not currently requested
+  #Edit an advisory which docs already approved
+    ${Approved_advisory}=    Fetch The First Docs Advisory     Approved
+    ${res} =    Rest Erratum Update    ${Approved_advisory}    advisory[text_ready]=1
+    Go To Lazily           errata.app.qa.eng.nay.redhat.com/docs/show/${Approved_advisory}
+    Page Should Contain    Advisory Documentation Approval - Requested, not yet approved
+  #Edit an advisory which docs already approved
+    ${Approved_advisory}=    Fetch The First Docs Advisory     Approved
+    ${res} =    Rest Erratum Update    ${Approved_advisory}    advisory[text_ready]=0
+    Go To Lazily           errata.app.qa.eng.nay.redhat.com/docs/show/${Approved_advisory}
+    Page Should Contain    Advisory Documentation Approval - Approved
+    "docs" Role Has Been Removed From User
+    
+Case 321279 Edit an advisory and update security impact for RHSA 
+    [Documentation]
+    [Tags]             ID_321279    
+  #Edit a RHSA advisory
+    ${res} =    Rest Erratum Update    ${RHSA_NewFile}    advisory[security_impact]=Low
+    Go To Lazily    ${HomePageURL}/advisory/${RHSA_NewFile}
+    Page Should Contain    [LOW]
+  #Edit a RHBA/RHEA advisory
+    ${res} =    Rest Erratum Update    ${RHBA_NewFile}    advisory[security_impact]=Low
+    Go To Lazily    ${HomePageURL}/advisory/${RHBA_NewFile}
+    Page Should Not Contain    [LOW]
+
+Case 321487 Edit CPE Text/CVE Names for RHSA/non RHSA advisory
+    [Documentation]
+    [Tags]             ID_321487    
+    "secalert" Role Has Been Added To User
+  #Edit CPE Text for a text only RHSA advisory
+    Rest Erratum Update     ${RHSA_NewFile}    advisory[text_only]=1
+    ${res} =     Rest Erratum Update    ${RHSA_NewFile}    advisory[text_only_cpe]=CPE test text only
+    Go To Lazily    ${ErrataIndexPage}/details/${RHSA_NewFile}
+    Page Should Contain    CPE test text only
+  #Try to edit CPE Text for a RHBA/RHEA advisory
+    Rest Erratum Update    ${RHEA_NewFile}    advisory[text_only]=0
+    ${res} =     Rest Erratum Update    ${RHEA_NewFile}    advisory[text_only_cpe]=CPE test text only
+    Go To Lazily    ${ErrataIndexPage}/details/${RHEA_NewFile}
+    Page Should Not Contain    CPE test text only
+
+    Rest Erratum Update    ${RHBA_NewFile}    advisory[text_only]=0
+    ${res} =     Rest Erratum Update    ${RHBA_NewFile}    advisory[text_only_cpe]=CPE test text only
+    Go To Lazily    ${ErrataIndexPage}/details/${RHBA_NewFile}
+    Page Should Not Contain    CPE test text only
+
+  #Edit CVE Names for a RHSA advisory
+    ${res} =     Rest Erratum Update    ${RHSA_NewFile}    advisory[cve]=CVE-1111-1111
+    Go To Lazily    ${ErrataIndexPage}/details/${RHSA_NewFile}
+    Page Should Contain    CVE-1111-1111
+  #Try to edit CVE Names for a RHBA/RHEA advisory
+    ${res} =     Rest Erratum Update    ${RHBA_NewFile}    advisory[cve]=CVE-1111-1111
+    Go To Lazily    ${ErrataIndexPage}/details/${RHBA_NewFile}
+    Page Should Not Contain    CVE-1111-1111
+    ${res} =     Rest Erratum Update    ${RHEA_NewFile}    advisory[cve]=CVE-1111-1111
+    Go To Lazily    ${ErrataIndexPage}/details/${RHEA_NewFile}
+    Page Should Not Contain    CVE-1111-1111
+
+  #Try to edit CVE names with invalid format
+    ${res} =     Rest Erratum Update    ${RHSA_NewFile}    advisory[cve]=cvetesting123
+    status code of "${res}" should not match "2??"
+    "secalert" Role Has Been Removed From User  
+ 
+Case 337195 Add builds to an advisory
+    [Documentation]
+    [Tags]             ID_337195    
+    "devel" Role Has Been Added To User
+  #Add build  with mismatched brew flags  to an advisory
+    ${res} =     Rest Add Build    ${Advisory_build_NEW}         product_version=RHEL-6-RHSCL-1      nvr=libxml2-2.7.6-14.el6
+    ${msg} =     Rest Json        ${res}
+    Should Contain    ${msg}    does not have any of the valid tags
+  #Add a build which doesn't exist on brew
+    ${res} =     Rest Add Build    ${Advisory_build_NEW}	     product_version=RHEL-6-RHSCL-1      nvr=test-libxml2-2.7.6-14.el6
+    ${msg} =     Rest Json        ${msg}
+    Should Contain    ${msg}    Brew error
+  #Add a build to a non-existed advisory
+    ${res} =     Rest Add Build    ${Un_existed_advisory}    product_version=RHEL-6-RHSCL-1      nvr=libxml2-2.7.6-14.el6
+    status code of "${res}" should be "404"
+  #Add valid build
+    ${res} =     Rest Remove Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1      nvr=mariadb55-mariadb-5.5.37-1.3.el6
+    status code of "${res}" should be "201"
+    ${res} =     Rest Add Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1         nvr=mariadb55-mariadb-5.5.37-1.3.el6
+    status code of "${res}" should be "201"
+  #Add the same build again
+    ${res} =     Rest Add Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1         nvr=mariadb55-mariadb-5.5.37-1.3.el6
+    ${msg} =     Rest Json    ${res}
+    Should Contain    ${msg}    already added to errata
+  #Add an build to an advisory which is not in NEW_FILES status
+    ${res} =     Rest Remove Build    ${Advisory_build_QE}      product_version=RHEL-7      nvr=evolution-data-server-3.8.5-23.el7.3
+    ${msg} =     Rest Json    ${res}
+    Should Contain    ${msg}    State must be NEW_FILES to update builds    
+    Rest Add Build    ${Advisory_build_QE}      product_version=RHEL-7      nvr=evolution-data-server-3.8.5-23.el7.3
+  #Add an build to a Text only advisory
+    ${status} =     Rest Erratum Update    ${Advisory_build_NEW}    advisory[text_only]=1
+    ${tmp} =     Rest Remove Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1      nvr=mariadb55-mariadb-5.5.37-1.3.el6
+    ${res} =     Rest Add Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1      nvr=mariadb55-mariadb-5.5.37-1.3.el6
+    status code of "${res}" should not match "2??"
+    ${status} =     Rest Erratum Update    ${Advisory_build_NEW}    advisory[text_only]=0
+    Rest Add Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1      nvr=mariadb55-mariadb-5.5.37-1.3.el6
+  #kinit with a readonly user and add build again
+    ${res} =     Rest Remove Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1      nvr=mariadb55-mariadb-5.5.37-1.3.el6
+    "readonly" Role Has Been Added To User
+    ${res} =     Rest Add Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1      nvr=mariadb55-mariadb-5.5.37-1.3.el6
+    status code of "${res}" should be "401"
+    "readonly" Role Has Been Removed From User
+    Rest Add Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1      nvr=mariadb55-mariadb-5.5.37-1.3.el6
+    "devel" Role Has Been Removed From User
+
+Case 337196 Remove builds from an advisory
+    [Documentation]    Just as the case 337195
+    [Tags]             ID_337196    
+    "devel" Role Has Been Added To User
+  #Remove a build which doesn't exist in the advisory
+    ${res} =     Rest Remove Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1    nvr=python-gudev-147.2-5.el7
+    status code of "${res}" should not match "2??"
+  #Remove a build from an advisory which is not in NEW_FILES status
+    ${res} =     Rest Add Build    ${Advisory_build_QE}      product_version=RHEL-7      nvr=evolution-data-server-3.8.5-23.el7.3
+    ${msg} =     Rest Json    ${res}
+    Should Contain    ${msg}    State must be NEW_FILES to update builds
+
+  #kinit with a readonly user and remove build again
+    "readonly" Role Has Been Added To User
+    ${res} =     Rest Remove Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1      nvr=mariadb55-mariadb-5.5.37-1.3.el6
+    status code of "${res}" should be "401"
+    Rest Add Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1      nvr=mariadb55-mariadb-5.5.37-1.3.el6
+    "readonly" Role Has Been Removed From User
+    "devel" Role Has Been Removed From User
+
+
+Case 338608 Check return JIRA issues for an advisory 
+    [Documentation]    Check JIRA issues
+    [Tags]             ID_338608    
+  #Show Jira issues for one advisory has jira_issues
+    ${res} =            Advisory Jira Issues List    17904
+    ${data} =           Rest Json     ${res}
+    Should Contain      ${data}      id_jira
+  #Show Jira issues for one advisory has no jira_issues
+    ${res} =            Advisory Jira Issues List    17902
+    ${data} =           Rest Json     ${res}
+    Should Be Equal    ${data}     []
+  #Show Jira issues for a non-existed advisory
+    ${res} =            Advisory Jira Issues List    123456789
+    ${data} =           Rest Json     ${res}
+    Should Contain      ${data}     error
+Case 355251 Get advisories for a JIRA issue
+    [Documentation]    Get advisories
+    [Tags]             ID_355251    
+  #Get advisories for a valid JIRA issue
+    ${res} =            Advisory List For A Valid Jira Issue    XNIO-197
+    ${data} =           Rest Json     ${res}
+    Should Contain      ${data}       id
+  #Get advisories for a JIRA issue has no advisory associated or an invalid JIRA issue
+    ${res} =           Advisory List For A Valid Jira Issue    XNIO-191
+    ${data} =           Rest Json     ${res}
+    Should Be Equal    ${data}     []
+    ${res} =           Advisory List For A Valid Jira Issue    191
+    ${data} =           Rest Json     ${res}
+    Should Contain      ${data}     error
+
+Case 355252 Show a JIRA issue
+    [Documentation]    Show jira issue
+    [Tags]             ID_355252    
+  #Get a JIRA issue
+    ${res} =           Show Jira Issue    XNIO-197
+    ${data} =          Rest Json      ${res}
+    status code of "${res}" should be "200"
+  #Get an invalid JIRA issue
+    ${res} =           Show Jira Issue    191
+    ${data} =          Rest Json      ${res}
+    Should Contain    ${data}     u'error': u'JIRA issue 191 not found.'
+
+Case 355258 Remove JIRA issue from an advisory
+    [Documentation]    Remove Jira issues
+    [Tags]             ID_355258_need_update    test
+    #kinit with dev/qa role
+    "qa" Role Has Been Added To User
+    "secalert" Role Has Been Removed From User
+    #Remove a valid JIRA issue from a NEW_FILES advisory
+    ${res} =    Rest Erratum Remove Jira Issue    17910    JBNET-2414
+    Wait Until Advisory Comments Contain    17910    The following JIRA issues have been removed:
+    Wait Until Advisory Comments Contain    17910    JIRA issue JBNET-2414 - Add product version and build number to SEP
+    #Remove  the same JIRA issue from  the advisory again
+    ${res} =    Rest Erratum Remove Jira Issue    17910    JBNET-2414
+    ${res} =    Rest Erratum Add Jira Issue    17910    JBNET-2414
+    #Remove an non-existed JIRA issue from the advisory
+    ${res} =    Rest Erratum Remove Jira Issue    17910     *** 
+    status code of "${res}" should not match "2??"
+    #Remove JIRA issue from  a non-existed advisory
+    ${res} =    Rest Erratum Remove Jira Issue    123456     *** 
+    status code of "${res}" should not match "2??"
+    #Remove a Security jira issue(Secure) from a RHSA
+    Rest Erratum Add Jira Issue    17902    JBPAPP-10848  
+    ${res} =    Rest Erratum Remove Jira Issue    17902    JBPAPP-10848
+    status code of "${res}" should not match "2??"
+    #Remove a JIRA issue which is only visible to the security team
+    Rest Erratum Add Jira Issue    17902    JBPAPP-8797
+    ${res} =    Rest Erratum Remove Jira Issue    17902    JBPAPP-8797
+    status code of "${res}" should match "2??"
+    #Switch to secalert user and repeat the two steps above
+    "secalert" Role Has Been Added To User
+    Rest Erratum Add Jira Issue    17902    JBPAPP-10848
+    ${res} =    Rest Erratum Remove Jira Issue    17902    JBPAPP-10848
+    status code of "${res}" should match "2??"
+    Rest Erratum Add Jira Issue    17902    JBPAPP-8797
+    ${res} =    Rest Erratum Remove Jira Issue    17902    JBPAPP-8797
+    status code of "${res}" should match "2??"
+    #Remove JIRA issue from an advisory which is not in NEW_FILES status, eg: QE, REL_PREP, SHIPPED_LIVE, PUSH_READY
+    ${res} =    Rest Erratum Remove Jira Issue    17927    XNIO-192
+    status code of "${res}" should not match "2??"    
+    #Remove a  Security JIRA issue(Secure) from an advisory which is not in NEW_FILES status, eg: QE, REL_PREP, SHIPPED_LIVE, PUSH_READY
+    Rest Erratum Add Jira Issue    17927    JBPAPP-8797
+    ${res} =    Rest Erratum Remove Jira Issue    17902    JBPAPP-8797
+    status code of "${res}" should match "2??"
+
+
+<<<<<<< HEAD
+Case 358998 321231 324776 Create/clone advisories with JIRA issue
+    [Documentation]    
+    [Tags]             ID_358998
+=======
+Case 358998 Create/clone advisories with JIRA issue
+    [Documentation]
+    [Tags]             ID_358998    
+>>>>>>> 04401ee3dd48330fea890961baecc783fc0d4241
+  #Create a RHBA  with only JIRA issue added filled as devel role
+	   "devel" Role Has Been Added To User
+	   "secalert" Role Has Been Removed From User
+	   ${res} =      Rest Erratum Create    RHBA    Low
+	   ...    RHEL    RHEL-7.0.0    solution    test
+	   ...    shajiang@redhat.com    shajiang@redhat.com
+	   ...    test    test    XNIO-200 
+	   status code of "${res}" should match "2??"
+	   ${data} =          Rest Json    ${res}
+	   ${dict} =          Rest Message To Dict     ${data} 
+	   ${errata_id} =     Convert To String    ${dict['content']['content']['errata_id']}
+	   Rest Advisory Drop     ${errata_id}
+	   Page Should Contain    Deleted
+	 #Create a RHBA with both bug and JIRA issue added as devel role
+	   ${res} =      Rest Erratum Create    RHBA    Low
+	   ...    RHEL    RHEL-7.0.0    solution    test
+	   ...    shajiang@redhat.com    shajiang@redhat.com
+	   ...    test    test     960113 XNIO-200
+	   status code of "${res}" should match "2??"
+	   ${data} =          Rest Json    ${res}
+	   ${dict} =          Rest Message To Dict     ${data} 
+	   ${errata_id} =     Convert To String    ${dict['content']['content']['errata_id']}
+	   Rest Advisory Drop     ${errata_id}
+	   Page Should Contain    Deleted
+         #Clone a RHBA with JIRA issue
+	   ${res} =      Rest Erratum Clone With Jira Issue    15648    XNIO-200
+	   status code of "${res}" should match "2??"
+	   ${data} =          Rest Json    ${res}
+	   ${dict} =          Rest Message To Dict     ${data} 
+	   ${errata_id} =     Convert To String    ${dict['content']['content']['errata_id']}
+	   Rest Advisory Drop     ${errata_id}
+
+
+	 #Create a RHEA  with only JIRA issue added filled as devel role
+	   ${res} =      Rest Erratum Create    RHEA    Low
+	   ...    RHEL    RHEL-7.0.0    solution    test
+	   ...    shajiang@redhat.com    shajiang@redhat.com
+	   ...    test    test    XNIO-200
+	   status code of "${res}" should match "2??"
+	   ${data} =          Rest Json    ${res}
+	   ${dict} =          Rest Message To Dict     ${data} 
+	   ${errata_id} =     Convert To String    ${dict['content']['content']['errata_id']}
+	   Rest Advisory Drop     ${errata_id}
+	   Page Should Contain    Deleted
+	 #Create a RHEA with both bug and JIRA issue added as devel role
+	   ${res} =      Rest Erratum Create    RHEA    Low
+	   ...    RHEL    RHEL-7.0.0    solution    test
+	   ...    shajiang@redhat.com    shajiang@redhat.com
+	   ...    test    test    960113 XNIO-200
+	   status code of "${res}" should match "2??"
+	   ${data} =          Rest Json    ${res}
+	   ${dict} =          Rest Message To Dict     ${data} 
+	   ${errata_id} =     Convert To String    ${dict['content']['content']['errata_id']}
+	   Rest Advisory Drop     ${errata_id}
+	   Page Should Contain    Deleted
+         #Clone a RHEA with JIRA issue
+	   ${res} =      Rest Erratum Clone With Jira Issue    17860    XNIO-200
+	   status code of "${res}" should match "2??"
+	   ${data} =          Rest Json    ${res}
+	   ${dict} =          Rest Message To Dict     ${data} 
+	   ${errata_id} =     Convert To String    ${dict['content']['content']['errata_id']}
+	   Rest Advisory Drop     ${errata_id}
+	 #Create a RHSA  with only JIRA issue added filled as devel role
+	   ${res} =      Rest Erratum Create    RHSA    Low
+	   ...    RHEL    RHEL-7.0.0    solution    test
+	   ...    shajiang@redhat.com    shajiang@redhat.com
+	   ...    test    test    XNIO-200
+	   ${status}=     Get Status Code From Response    ${res}
+           ${errata_type} =    Run Keyword If    '${status}' == '201'    Drop A New Advisory    ${res}
+           Run Keyword If    '${status}' == '201'    Should Not Be Equal    ${errata_type}    RHSA
+	#Create a RHSA with both bug and JIRA issue added as devel role
+	   ${res} =      Rest Erratum Create    RHSA    Low
+	   ...    RHEL    RHEL-7.0.0    solution    test
+	   ...    shajiang@redhat.com    shajiang@redhat.com
+	   ...    test    test    960113 XNIO-200
+	   status code of "${res}" should not match "2??"
+	#Create a RHSA  with both bug and JIRA issue added filled as secalert role
+	   "secalert" Role Has Been Added To User
+	   ${res} =      Rest Erratum Create    RHSA    Low
+	   ...    RHEL    RHEL-7.0.0    solution    test
+	   ...    shajiang@redhat.com    shajiang@redhat.com
+	   ...    test    test    960113 XNIO-200
+           ${status}=     Get Status Code From Response    ${res}
+           ${errata_type} =    Run Keyword If    '${status}' == '201'    Drop A New Advisory    ${res}
+           Run Keyword If    '${status}' == '201'    Should Be Equal    ${errata_type}    RHSA
+      #Clone a RHSA with JIRA issue or both bug and JIRA issue contained as secalert user
+	   ${res} =      Rest Erratum Clone With Jira Issue    17902    XNIO-200
+           ${status}=     Get Status Code From Response    ${res}
+           ${errata_type} =    Run Keyword If    '${status}' == '201'    Drop A New Advisory    ${res}
+           Run Keyword If    '${status}' == '201'    Should Be Equal    ${errata_type}    RHSA
+      #Clone an RHSA with non-secalert user
+	   "secalert" Role Has Been Removed From User
+	   ${res} =      Rest Erratum Clone With Jira Issue    17902    XNIO-200
+           ${status}=     Get Status Code From Response    ${res}
+           ${errata_type} =    Run Keyword If    '${status}' == '201'    Drop A New Advisory    ${res}
+           Run Keyword If    '${status}' == '201'    Should Not Be Equal    ${errata_type}    RHSA
+   
+
+Case 317592 Change states for an advisory
+    [Documentation]    Change stages
+    [Tags]             ID_317592    
+  #Change a NEW_FILES advisory to QE with conditions satisfied
+    ${res} =           Rest Erratum Change State    17862    QE
+    ${data} =          Rest Json    ${res}
+    Should Contain     ${data}      u'status': u'QE' 
+  #Change a QE advisory to QE
+    ${res} =           Rest Erratum Change State    17862    QE
+    ${data} =          Rest Json    ${res}
+    Should Contain    ${data}       u'Validation failed: Previous - Transition QE => QE is invalid'
+  #Change a QE advisory to REL_PREP without conditons satisfied
+    ${res} =           Rest Erratum Change State    17862    REL_PREP
+    ${data} =          Rest Json    ${res}
+    Should Contain     ${data}      u'Validation failed: Errata Must complete TPS, Errata Must complete TPS RHNQA, Errata Advisory must be up to date on RHN Stage'
+    Rest Erratum Change State    17862     NEW_FILES
+
+Case 321077 Change Docs reviewer for an advisory
+    [Documentation]    Change Docs reviewer
+    [Tags]             ID_321077    
+  #Change the docs reviewer for an advisory
+    ${res} =           Rest Erratum Change Docs Reviewer    17862    shajiang@redhat.com
+    ${data} =          Rest Json    ${res}
+    Should Contain     ${data}      update_date
+  #Change the docs reviewer to the same person as before
+    ${res} =           Rest Erratum Change Docs Reviewer    17862    wluo@redhat.com
+    ${data} =          Rest Json    ${res}
+    Should Contain     ${data}      update_date
+  #Change the docs reviewer to an unexist user
+    ${res} =           Rest Erratum Change Docs Reviewer    17862    aaaaa@redhat.com
+    ${data} =          Rest Json    ${res}
+    Should Contain     ${data}      u"Couldn't find User with login_name = aaaaa@redhat.com"
+
+Case 389963 Drop an advisory
+    [Documentation]
+    [Tags]             ID_389963    
+    "secalert" Role Has Been Added To User
+  #Drop a NEW_FILES advisory to DROPPED_NO_SHIP with conditions satisfied
+    ${id} =          Fetch The First State Advisory        NEW_FILES 
+    ${res} =         Rest Erratum Change State    ${id}    DROPPED_NO_SHIP
+    status code of "${res}" should match "2??"
+    ${status}=       Rest Erratum Change State    ${id}    NEW_FILES
+  #Drop a QE advisory to DROPPED_NO_SHIP as below
+    ${id} =          Fetch The First State Advisory        QE
+    ${res} =         Rest Erratum Change State    ${id}    DROPPED_NO_SHIP
+    status code of "${res}" should match "2??"
+    ${status}=       Rest Erratum Change State    ${id}    QE       
+  #Drop a REL_PREP advisory
+    ${id} =          Fetch The First State Advisory        REL_PREP  
+    ${res} =         Rest Erratum Change State    ${id}    DROPPED_NO_SHIP
+    status code of "${res}" should match "2??"
+    ${status}=       Rest Erratum Change State    ${id}    REL_PREP 
+  #Drop a PUSH_READY advisory
+    ${id} =          Fetch The First State Advisory        PUSH_READY
+    ${res} =         Rest Erratum Change State    ${id}    DROPPED_NO_SHIP
+    status code of "${res}" should match "2??"
+    ${status}=       Rest Erratum Change State    ${id}    PUSH_READY
+  #Drop a SHIPPED_LIVE advisory
+    ${id} =          Fetch The First State Advisory        SHIPPED
+    ${res} =         Rest Erratum Change State    ${id}    DROPPED_NO_SHIP
+    status code of "${res}" should not match "2??"
+    ${status}=       Rest Erratum Change State    ${id}    SHIPPED_LIVE  
+    "secalert" Role Has Been Removed From User
+
+
+
+Case test
+    [Documentation]
+    [Tags]             ID_test
+  #Add an build to a Text only advisory
+    ${status} =     Rest Erratum Update    ${Advisory_build_NEW}    advisory[text_only]=1
+    ${res} =     Rest Remove Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1      nvr=mariadb55-mariadb-5.5.37-1.3.el6
+    ${res} =     Rest Add Build    ${Advisory_build_NEW}      product_version=RHEL-6-RHSCL-1      nvr=mariadb55-mariadb-5.5.37-1.3.el6
+    ${status} =     Rest Erratum Update    ${Advisory_build_NEW}    advisory[text_only]=0
+Case
+    [Documentation]
+    [Tags]             ID_
+Case
+    [Documentation]
+    [Tags]             ID_
+
+
+
