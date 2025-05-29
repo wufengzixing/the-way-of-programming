@@ -1,0 +1,3 @@
+C:/work_2025/cpp/build/CMakeFiles/test.dir
+C:/work_2025/cpp/build/CMakeFiles/edit_cache.dir
+C:/work_2025/cpp/build/CMakeFiles/rebuild_cache.dir

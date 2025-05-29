@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.10)
+
+project(test)
+
+set( CMAKE_CXX_FLAGS "-std=c++11" )
+
+#add_subdirectory(子文件夹名称) 
+#add_library(库文件名称 STATIC 文件)
+#include_directories(添加头文件路径) 
+#link_directories(路径) 
+# add_definitions(编译选项)
+add_executable(${PROJECT_NAME} main.cc)
